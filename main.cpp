@@ -90,11 +90,19 @@ public:
                 }
                 break;
 
-            case 0x33: // R-Type
+            case 0x33: // R-Type (Arithmetic: ADD, SUB, etc.)
                 if (funct3 == 0x0) { 
-                    // example: ADD: (x1 = x2 + x3)
-                    regs[rd] = regs[rs1] + regs[rs2];
-                    cout << "EXEC: ADD x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
+                    // To distinguish ADD from SUB, we check Bit 30.
+                    // If Bit 30 is 1 (0x40000000), it's SUB. If 0, it's ADD.
+                    if (inst & 0x40000000) {
+                        // SUB
+                        regs[rd] = regs[rs1] - regs[rs2];
+                        cout << "EXEC: SUB x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
+                    } else {
+                        // ADD
+                        regs[rd] = regs[rs1] + regs[rs2];
+                        cout << "EXEC: ADD x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
+                    }
                 }
                 break;
             
@@ -151,6 +159,36 @@ public:
                     }
                 }
                 break;
+            
+            case 0x63: // B-Type (Branch Instructions)
+                // Format: bne rs1, rs2, offset
+                {  
+                    // 1. Reconstructing the 13-bit Immediate (Offset) from scrambled bits
+                    int32_t imm12   = (inst >> 31) & 0x1;
+                    int32_t imm10_5 = (inst >> 25) & 0x3F;
+                    int32_t imm4_1  = (inst >> 8) & 0xF;
+                    int32_t imm11   = (inst >> 7) & 0x1;
+
+                    int32_t imm = (imm12 << 12) | (imm11 << 11) | (imm10_5 << 5) | (imm4_1 << 1);
+
+                    // Sign Extension (if bit 12 is 1, make the whole number negative)
+                    if (imm12) imm |= 0xFFFFE000;
+
+                    // 2. Execute Branch Logic
+                    if (funct3 == 0x1) { // BNE (Branch Not Equal)
+                        if (regs[rs1] != regs[rs2]) {
+                            // BRANCH TAKEN!
+                            // We update PC. 
+                            // Our function adds +4 at the very end. 
+                            // So we must subtract 4 here so the total change is correct.
+                            pc += (imm - 4); 
+                            cout << "EXEC: BNE (TAKEN) -> Jumping to PC 0x" << hex << (pc + 4) << endl;
+                        } else {
+                            cout << "EXEC: BNE (NOT TAKEN)" << endl;
+                        }
+                    }
+                }
+                break;
 
             default:
                 cout << "Unknown Opcode: 0x" << hex << opcode << endl;
@@ -184,15 +222,17 @@ int main() {
     
     CPU myCpu;
 
-    // --- MEMORY TEST PROGRAM ---
-    // 1. ADDI x1, x0, 255  (Set x1 = 255)      -> Hex: 0x0FF00093
-    // 2. SW   x1, 100(x0)  (Store x1 to Addr 100) -> Hex: 0x06102223 
-    // 3. LW   x5, 100(x0)  (Load Addr 100 to x5)  -> Hex: 0x06402283
-    // 4. Halt                                     -> Hex: 0x00000000
+    // --- BRANCH TEST (Countdown Loop) ---
+    // 1. ADDI x1, x0, 3    (x1 = 3)      -> Hex: 0x00300093
+    // 2. ADDI x2, x0, 1    (x2 = 1)      -> Hex: 0x00100113
+    // 3. SUB  x1, x1, x2   (x1 = x1 - 1) -> Hex: 0x402080B3
+    // 4. BNE  x1, x0, -4   (Jump to 3)   -> Hex: 0xFE009EE3
+    // 5. Halt                            -> Hex: 0x00000000
     vector<uint32_t> program = {
-        0x0FF00093, 
-        0x06102223,
-        0x06402283,
+        0x00300093, 
+        0x00100113,
+        0x402080B3, 
+        0xFE009EE3,
         0x00000000 
     };
 
