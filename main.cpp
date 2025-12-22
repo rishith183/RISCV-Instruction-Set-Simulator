@@ -1,32 +1,31 @@
 #include "CPU.h"
 
-int main() {
-    cout << "--- RISC-V SIMULATOR STARTING ---" << endl;
-    
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        cerr << "Usage: ./riscv_sim <elf_file>" << endl;
+        return 1;
+    }
+
     CPU myCpu;
 
-    // Test Program: Countdown Loop
-    vector<uint32_t> program = {
-        0x00300093, // ADDI x1, x0, 3
-        0x00100113, // ADDI x2, x0, 1
-        0x402080B3, // SUB  x1, x1, x2
-        0xFE009EE3, // BNE  x1, x0, -4
-        0x00000000  // HALT
-    };
-
-    myCpu.loadProgram(program);
+    cout << "--- RISC-V SIMULATOR STARTING ---" << endl;
+    
+    // Load the real binary file
+    if (!myCpu.loadELF(argv[1])) {
+        return 1;
+    }
 
     bool running = true;
     while(running) {
-        char cmd;
-        cout << "Press 's' to step, 'q' to quit: ";
-        cin >> cmd;
-        if (cmd == 's') {
-            running = myCpu.executeNext();
-            myCpu.printStatus();
-        } else if (cmd == 'q') {
-            break;
-        }
+        // Simple step execution for now
+        // In the future, you can just loop executeNext() until false
+        running = myCpu.executeNext();
+        
+        // Safety break if PC goes out of bounds or hits 0 (null) often
+        if (myCpu.getPC() == 0) break; 
     }
+    
+    myCpu.printStatus();
+    cout << "--- EXECUTION FINISHED ---" << endl;
     return 0;
 }

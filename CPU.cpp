@@ -1,26 +1,23 @@
 #include "CPU.h"
+#include "elfio/elfio.hpp"
 #include <iomanip>
+#include <algorithm>
+
+using namespace ELFIO;
 
 CPU::CPU() {
     pc = 0;
-    fill(begin(regs), end(regs), 0);
-    memory.resize(4096, 0);
-    regs[2] = 4096; // Stack Pointer
+    std::fill(std::begin(regs), std::end(regs), 0);
+    memory.resize(4096, 0); 
+    regs[2] = 4096; // Stack Pointer initialization
 }
 
 uint32_t CPU::fetch() {
+    // Safety check to prevent out-of-bounds access
     if (pc >= memory.size()) return 0;
+    
+    // Little-Endian Load
     return memory[pc] | (memory[pc+1] << 8) | (memory[pc+2] << 16) | (memory[pc+3] << 24);
-}
-
-void CPU::loadProgram(const vector<uint32_t>& program) {
-    for(size_t i=0; i<program.size(); i++) {
-        uint32_t word = program[i];
-        memory[i*4] = word & 0xFF;
-        memory[i*4+1] = (word >> 8) & 0xFF;
-        memory[i*4+2] = (word >> 16) & 0xFF;
-        memory[i*4+3] = (word >> 24) & 0xFF;
-    }
 }
 
 void CPU::printStatus() {
@@ -36,7 +33,7 @@ void CPU::printStatus() {
 
 bool CPU::executeNext() {
     uint32_t inst = fetch();
-    if (inst == 0) return false;
+    if (inst == 0) return false; // HALT on 0x00000000
 
     uint32_t opcode = inst & 0x7F;
     uint32_t rd = (inst >> 7) & 0x1F;
@@ -44,13 +41,14 @@ bool CPU::executeNext() {
     uint32_t rs2 = (inst >> 20) & 0x1F;
     uint32_t funct3 = (inst >> 12) & 0x7;
 
-    regs[0] = 0; // x0 is always 0
+    regs[0] = 0; // Enforce x0 = 0 invariant
 
     switch(opcode) {
         case 0x13: // ADDI
             if (funct3 == 0x0) { 
                 int32_t imm = (int32_t)(inst & 0xFFF00000) >> 20;
                 regs[rd] = regs[rs1] + imm;
+                // Optional: Reduce console spam by commenting this out later
                 cout << "EXEC: ADDI x" << dec << rd << ", x" << rs1 << ", " << imm << endl;
             }
             break;
@@ -115,6 +113,59 @@ bool CPU::executeNext() {
                 }
             }
             break;
+        
+        case 0x37: // LUI (Load Upper Immediate)
+        {
+            int32_t imm = inst & 0xFFFFF000; // Extract top 20 bits
+            regs[rd] = imm;
+            cout << "EXEC: LUI x" << dec << rd << ", 0x" << hex << imm << endl;
+            break;
+        }
+
+        case 0x17: // AUIPC (Add Upper Immediate to PC)
+        {
+            int32_t imm = inst & 0xFFFFF000;
+            regs[rd] = pc + imm; // Adds offset to current PC
+            cout << "EXEC: AUIPC x" << dec << rd << ", 0x" << hex << imm << endl;
+            break;
+        }
+
+        case 0x6F: // JAL (Jump and Link) - Function Call
+        {
+            // J-Type Immediate Decoding (The scrambled bits)
+            int32_t imm20 = (inst >> 31) & 0x1;
+            int32_t imm10_1 = (inst >> 21) & 0x3FF;
+            int32_t imm11 = (inst >> 20) & 0x1;
+            int32_t imm19_12 = (inst >> 12) & 0xFF;
+            
+            // Reassemble the 20-bit offset
+            int32_t offset = (imm20 << 20) | (imm19_12 << 12) | (imm11 << 11) | (imm10_1 << 1);
+            
+            // Sign-Extend to 32 bits
+            if (offset & 0x100000) offset |= 0xFFE00000; 
+
+            regs[rd] = pc + 4; // Save return address (link)
+            pc += offset;      // Jump to target
+            
+            cout << "EXEC: JAL (Jump) -> PC is now 0x" << hex << pc << endl;
+            return true; // Return immediately (Do not do pc += 4)
+        }
+
+        case 0x67: // JALR (Jump and Link Register) - Function Return
+        {
+            if (funct3 == 0x0) {
+                int32_t imm = (int32_t)(inst & 0xFFF00000) >> 20;
+                uint32_t target = regs[rs1] + imm;
+                target &= ~1; // Clear LSB (Hardware requirement)
+                
+                regs[rd] = pc + 4; // Save return address
+                pc = target;       // Jump
+                
+                cout << "EXEC: JALR (Return) -> PC is now 0x" << hex << pc << endl;
+                return true; // Return immediately
+            }
+            break;
+        }
             
         default:
             cout << "Unknown Opcode: 0x" << hex << opcode << endl;
@@ -122,5 +173,55 @@ bool CPU::executeNext() {
     }
     
     pc += 4;
+    return true;
+}
+
+bool CPU::loadELF(const string& filename) {
+    elfio reader;
+    
+    // 1. Load the file
+    if (!reader.load(filename)) {
+        cerr << "Error: Could not process ELF file: " << filename << endl;
+        return false;
+    }
+
+    // 2. Check if it is a RISC-V binary
+    if (reader.get_machine() != EM_RISCV) {
+        cerr << "Error: Defined file is not a RISC-V binary." << endl;
+        return false;
+    }
+
+    // 3. Clear existing memory
+    std::fill(memory.begin(), memory.end(), 0);
+
+    // 4. Iterate over "Segments" 
+    for (const auto& segment : reader.segments) {
+        if (segment->get_type() == PT_LOAD) {
+            uint32_t address = (uint32_t)segment->get_virtual_address();
+            uint32_t fileSize = (uint32_t)segment->get_file_size();
+            uint32_t memSize = (uint32_t)segment->get_memory_size();
+
+            // Check boundaries
+            if (address + memSize > memory.size()) {
+                if (address + memSize < 1024 * 1024 * 4) { // Limit to 4MB
+                     memory.resize(address + memSize);
+                } else {
+                     cerr << "Error: Segment exceeds memory bounds." << endl;
+                     return false;
+                }
+            }
+
+            // Copy data from file to our memory vector
+            if (fileSize > 0) {
+                const char* data = segment->get_data();
+                memcpy(&memory[address], data, fileSize);
+            }
+        }
+    }
+
+    // 5. Set the Program Counter (PC)
+    pc = (uint32_t)reader.get_entry();
+    cout << "Loaded ELF. Entry point set to: 0x" << hex << pc << endl;
+    
     return true;
 }

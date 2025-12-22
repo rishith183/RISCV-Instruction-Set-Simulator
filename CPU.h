@@ -4,6 +4,8 @@
 #include <iostream>
 #include <vector>
 #include <cstdint>
+#include <string>
+#include <cstring>
 
 using namespace std;
 
@@ -18,8 +20,13 @@ public:
     
     uint32_t fetch();
     bool executeNext();
-    void loadProgram(const vector<uint32_t>& program);
     void printStatus();
+    
+    // loader
+    bool loadELF(const string& filename); 
+    
+    // Helper to access PC 
+    uint32_t getPC() const { return pc; }
 };
 
 #endif
