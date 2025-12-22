@@ -5,7 +5,7 @@
 
 using namespace std;
 
-// --- DEFINITIONS ---
+
 // RISC-V has 32 registers. x0 is always 0.
 // We use 'uint32_t' because registers are exactly 32 bits (4 bytes).
 class CPU {
@@ -97,6 +97,60 @@ public:
                     cout << "EXEC: ADD x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
                 }
                 break;
+            
+            case 0x03: // I-Type (Load Instructions)
+                if (funct3 == 0x2) { // LW (Load Word)
+                    // Format: lw rd, offset(rs1)
+                    // Logic: Read from Memory[rs1 + offset] -> rd
+                    
+                    int32_t imm = (int32_t)(inst & 0xFFF00000) >> 20; // Extract Offset
+                    uint32_t addr = regs[rs1] + imm;                  // Calculate Address
+                    
+                    // Safety Check: Are we reading valid memory?
+                    if (addr + 3 < memory.size()) {
+                        // Read 4 bytes and combine them
+                        uint32_t val = memory[addr] | 
+                                      (memory[addr+1] << 8) | 
+                                      (memory[addr+2] << 16) | 
+                                      (memory[addr+3] << 24);
+                        regs[rd] = val;
+                        cout << "EXEC: LW x" << dec << rd << " <- MEM[0x" << hex << addr << "] (Value: 0x" << val << ")" << endl;
+                    } else {
+                        cout << "ERROR: Load Address Out of Bounds!" << endl;
+                        return false;
+                    }
+                }
+                break;
+
+            case 0x23: // S-Type (Store Instructions)
+                if (funct3 == 0x2) { // SW (Store Word)
+                    // Format: sw rs2, offset(rs1)
+                    // Logic: Write rs2 -> Memory[rs1 + offset]
+                    // NOTE: S-Type immediate is SPLIT (Bits 7-11 and 25-31)
+                    
+                    int32_t imm11_5 = (inst >> 25) & 0x7F;
+                    int32_t imm4_0  = (inst >> 7) & 0x1F;
+                    int32_t imm = (imm11_5 << 5) | imm4_0;
+                    
+                    // Sign extend (handle negative offsets)
+                    if (imm & 0x800) imm |= 0xFFFFF000;
+
+                    uint32_t addr = regs[rs1] + imm;
+                    uint32_t val = regs[rs2];
+
+                    if (addr + 3 < memory.size()) {
+                        // Write 4 bytes to memory
+                        memory[addr]   = val & 0xFF;
+                        memory[addr+1] = (val >> 8) & 0xFF;
+                        memory[addr+2] = (val >> 16) & 0xFF;
+                        memory[addr+3] = (val >> 24) & 0xFF;
+                        cout << "EXEC: SW MEM[0x" << hex << addr << "] <- x" << dec << rs2 << " (Value: 0x" << val << ")" << endl;
+                    } else {
+                        cout << "ERROR: Store Address Out of Bounds!" << endl;
+                        return false;
+                    }
+                }
+                break;
 
             default:
                 cout << "Unknown Opcode: 0x" << hex << opcode << endl;
@@ -130,16 +184,15 @@ int main() {
     
     CPU myCpu;
 
-    // --- TEST PROGRAM ---
-    // We are hand-assembling assembly into Hex code.
-    // 1. ADDI x1, x0, 10  (Set x1 = 10) -> Hex: 0x00A00093
-    // 2. ADDI x2, x0, 5   (Set x2 = 5)  -> Hex: 0x00500113
-    // 3. ADD  x3, x1, x2  (Set x3 = x1 + x2 = 15) -> Hex: 0x002081B3
-    // 4. 0x00000000 (Halt)
+    // --- MEMORY TEST PROGRAM ---
+    // 1. ADDI x1, x0, 255  (Set x1 = 255)      -> Hex: 0x0FF00093
+    // 2. SW   x1, 100(x0)  (Store x1 to Addr 100) -> Hex: 0x06102223 
+    // 3. LW   x5, 100(x0)  (Load Addr 100 to x5)  -> Hex: 0x06402283
+    // 4. Halt                                     -> Hex: 0x00000000
     vector<uint32_t> program = {
-        0x00A00093, 
-        0x00500113,
-        0x002081B3,
+        0x0FF00093, 
+        0x06102223,
+        0x06402283,
         0x00000000 
     };
 
