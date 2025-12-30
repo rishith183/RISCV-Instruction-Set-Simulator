@@ -251,6 +251,40 @@ bool CPU::executeNext() {
             }
             break;
         }
+
+        case 0x73: // ECALL (System Calls)
+        {
+            uint32_t syscall_num = regs[17]; 
+
+            switch(syscall_num) {
+                case 1: // Print Integer
+                    cout << "SYSCALL: Print Int -> " << dec << (int32_t)regs[10] << endl;
+                    break;
+                    
+                case 4: // Print String
+                {
+                    uint32_t addr = regs[10];
+                    string output = "";
+                    while(addr < memory.size()) {
+                        char c = (char)memory[addr];
+                        if (c == '\0') break;
+                        output += c;
+                        addr++;
+                    }
+                    cout << "SYSCALL: Print Str -> " << output << endl;
+                    break;
+                }
+                    
+                case 10: // Exit
+                    cout << "SYSCALL: Exit called." << endl;
+                    return false; 
+                    
+                default:
+                    cout << "Unknown Syscall: " << syscall_num << endl;
+                    break;
+            }
+            break;
+        }
             
         default:
             cout << "Unknown Opcode: 0x" << hex << opcode << endl;
