@@ -10,6 +10,8 @@ CPU::CPU() {
     std::fill(std::begin(regs), std::end(regs), 0);
     memory.resize(4096, 0); 
     regs[2] = 4096; // Stack Pointer initialization
+
+    regs[10] = 5; // Initialize x10 to 5 for testing
 }
 
 uint32_t CPU::fetch() {
@@ -44,30 +46,110 @@ bool CPU::executeNext() {
     regs[0] = 0; // Enforce x0 = 0 invariant
 
     switch(opcode) {
-        case 0x13: // ADDI
-            if (funct3 == 0x0) { 
-                int32_t imm = (int32_t)(inst & 0xFFF00000) >> 20;
-                regs[rd] = regs[rs1] + imm;
-                // Optional: Reduce console spam by commenting this out later
-                cout << "EXEC: ADDI x" << dec << rd << ", x" << rs1 << ", " << imm << endl;
+
+        case 0x13: // Immediate Arithmetic
+        {
+            int32_t imm = (int32_t)inst >> 20;
+            // For Shift instructions, immediate is only lower 5 bits
+            uint32_t shamt = imm & 0x1F; 
+
+            switch(funct3) {
+                case 0x0: // ADDI
+                    regs[rd] = regs[rs1] + imm;
+                    cout << "EXEC: ADDI x" << dec << rd << ", x" << rs1 << ", " << imm << endl;
+                    break;
+                case 0x2: // SLTI (Set Less Than Immediate)
+                    regs[rd] = (regs[rs1] < imm) ? 1 : 0;
+                    cout << "EXEC: SLTI x" << dec << rd << ", x" << rs1 << ", " << imm << endl;
+                    break;
+                case 0x3: // SLTIU (Unsigned)
+                    regs[rd] = ((uint32_t)regs[rs1] < (uint32_t)imm) ? 1 : 0;
+                    cout << "EXEC: SLTIU x" << dec << rd << ", x" << rs1 << ", " << imm << endl;
+                    break;
+                case 0x4: // XORI
+                    regs[rd] = regs[rs1] ^ imm;
+                    cout << "EXEC: XORI x" << dec << rd << ", x" << rs1 << ", " << imm << endl;
+                    break;
+                case 0x6: // ORI
+                    regs[rd] = regs[rs1] | imm;
+                    cout << "EXEC: ORI x" << dec << rd << ", x" << rs1 << ", " << imm << endl;
+                    break;
+                case 0x7: // ANDI
+                    regs[rd] = regs[rs1] & imm;
+                    cout << "EXEC: ANDI x" << dec << rd << ", x" << rs1 << ", " << imm << endl;
+                    break;
+                case 0x1: // SLLI (Shift Left Logical)
+                    regs[rd] = regs[rs1] << shamt;
+                    cout << "EXEC: SLLI x" << dec << rd << ", x" << rs1 << ", " << shamt << endl;
+                    break;
+                case 0x5: // SRLI & SRAI
+                    if (inst & 0x40000000) { // Bit 30 checks if it's SRAI (Arithmetic Right)
+                        regs[rd] = (int32_t)regs[rs1] >> shamt; // C++ handles arithmetic shift on signed types
+                        cout << "EXEC: SRAI x" << dec << rd << ", x" << rs1 << ", " << shamt << endl;
+                    } else { // SRLI (Logical Right)
+                        regs[rd] = (uint32_t)regs[rs1] >> shamt;
+                        cout << "EXEC: SRLI x" << dec << rd << ", x" << rs1 << ", " << shamt << endl;
+                    }
+                    break;
+                default:
+                    cout << "Unknown I-Type Funct3: " << funct3 << endl;
+                    break;
             }
             break;
+        }
             
-        case 0x33: // ADD & SUB
-            if (funct3 == 0x0) {
-                if (inst & 0x40000000) {
-                    regs[rd] = regs[rs1] - regs[rs2];
-                    cout << "EXEC: SUB x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
-                } else {
-                    regs[rd] = regs[rs1] + regs[rs2];
-                    cout << "EXEC: ADD x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
-                }
+        case 0x33: // Register Arithmetic
+        {
+            switch(funct3) {
+                case 0x0: // ADD & SUB
+                    if (inst & 0x40000000) { // Bit 30 sets Sub
+                        regs[rd] = regs[rs1] - regs[rs2];
+                        cout << "EXEC: SUB x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
+                    } else {
+                        regs[rd] = regs[rs1] + regs[rs2];
+                        cout << "EXEC: ADD x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
+                    }
+                    break;
+                case 0x1: // SLL
+                    regs[rd] = regs[rs1] << (regs[rs2] & 0x1F);
+                    cout << "EXEC: SLL x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
+                    break;
+                case 0x2: // SLT
+                    regs[rd] = (regs[rs1] < regs[rs2]) ? 1 : 0;
+                    cout << "EXEC: SLT x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
+                    break;
+                case 0x3: // SLTU
+                    regs[rd] = ((uint32_t)regs[rs1] < (uint32_t)regs[rs2]) ? 1 : 0;
+                    cout << "EXEC: SLTU x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
+                    break;
+                case 0x4: // XOR
+                    regs[rd] = regs[rs1] ^ regs[rs2];
+                    cout << "EXEC: XOR x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
+                    break;
+                case 0x5: // SRL & SRA
+                    if (inst & 0x40000000) { // SRA
+                        regs[rd] = (int32_t)regs[rs1] >> (regs[rs2] & 0x1F);
+                        cout << "EXEC: SRA x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
+                    } else { // SRL
+                        regs[rd] = (uint32_t)regs[rs1] >> (regs[rs2] & 0x1F);
+                        cout << "EXEC: SRL x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
+                    }
+                    break;
+                case 0x6: // OR
+                    regs[rd] = regs[rs1] | regs[rs2];
+                    cout << "EXEC: OR x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
+                    break;
+                case 0x7: // AND
+                    regs[rd] = regs[rs1] & regs[rs2];
+                    cout << "EXEC: AND x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
+                    break;
             }
             break;
+        }
 
         case 0x03: // LW
             if (funct3 == 0x2) { 
-                int32_t imm = (int32_t)(inst & 0xFFF00000) >> 20;
+                int32_t imm = (int32_t)inst >> 20;
                 uint32_t addr = regs[rs1] + imm;
                 if (addr + 3 < memory.size()) {
                     uint32_t val = memory[addr] | (memory[addr+1] << 8) | (memory[addr+2] << 16) | (memory[addr+3] << 24);
@@ -105,10 +187,13 @@ bool CPU::executeNext() {
                 int32_t imm = (imm12 << 12) | (imm11 << 11) | (imm10_5 << 5) | (imm4_1 << 1);
                 if (imm12) imm |= 0xFFFFE000;
 
+                cout << "EXEC: BNE Checking x" << dec << rs1 << "(" << (int32_t)regs[rs1] << ") vs x" << rs2 << "(" << (int32_t)regs[rs2] << ")" << endl;
+
                 if (regs[rs1] != regs[rs2]) {
                     pc += (imm - 4);
-                    cout << "EXEC: BNE (TAKEN) -> Jumping to PC 0x" << hex << (pc + 4) << endl;
-                } else {
+                    cout << "   -> TAKEN. Jumping to PC 0x" << hex << (pc + 4) << endl;
+                }
+                else {
                     cout << "EXEC: BNE (NOT TAKEN)" << endl;
                 }
             }
