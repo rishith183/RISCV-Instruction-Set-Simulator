@@ -11,7 +11,7 @@ CPU::CPU() {
     memory.resize(4096, 0); 
     regs[2] = 4096; // Stack Pointer initialization
 
-    regs[10] = 5; // Initialize x10 to 5 for testing
+    // regs[10] = 5; // Initialize x10 to 5 for testing
 }
 
 uint32_t CPU::fetch() {
@@ -154,7 +154,7 @@ bool CPU::executeNext() {
                 if (addr + 3 < memory.size()) {
                     uint32_t val = memory[addr] | (memory[addr+1] << 8) | (memory[addr+2] << 16) | (memory[addr+3] << 24);
                     regs[rd] = val;
-                    cout << "EXEC: LW x" << dec << rd << " <- MEM[0x" << hex << addr << "] (Value: 0x" << val << ")" << endl;
+                    cout << "EXEC: LW x" << dec << rd << " <- MEM[0x" << hex << addr << "] (Value: 0x" << hex << val << ")" << endl;
                 }
             }
             break;
@@ -173,7 +173,7 @@ bool CPU::executeNext() {
                     memory[addr+1] = (val >> 8) & 0xFF;
                     memory[addr+2] = (val >> 16) & 0xFF;
                     memory[addr+3] = (val >> 24) & 0xFF;
-                    cout << "EXEC: SW MEM[0x" << hex << addr << "] <- x" << dec << rs2 << " (Value: 0x" << val << ")" << endl;
+                    cout << "EXEC: SW MEM[0x" << hex << addr << "] <- x" << dec << rs2 << " (Value: 0x" << hex << val << ")" << endl;
                 }
             }
             break;
@@ -259,6 +259,24 @@ bool CPU::executeNext() {
     
     pc += 4;
     return true;
+}
+
+void CPU::loadRaw(const vector<uint32_t>& code) {
+    // Reset memory
+    std::fill(memory.begin(), memory.end(), 0);
+    
+    // Copy code into memory (byte by byte)
+    size_t addr = 0;
+    for (uint32_t inst : code) {
+        if (addr + 4 > memory.size()) break;
+        memory[addr]   = inst & 0xFF;
+        memory[addr+1] = (inst >> 8) & 0xFF;
+        memory[addr+2] = (inst >> 16) & 0xFF;
+        memory[addr+3] = (inst >> 24) & 0xFF;
+        addr += 4;
+    }
+    pc = 0; // Reset PC
+    cout << "Loaded " << code.size() * 4 << " bytes of raw machine code." << endl;
 }
 
 bool CPU::loadELF(const string& filename) {

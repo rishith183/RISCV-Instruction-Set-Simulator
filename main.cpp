@@ -1,31 +1,35 @@
+#include <iostream>
 #include "CPU.h"
 
+using namespace std;
+
 int main(int argc, char** argv) {
-    if (argc < 2) {
+    if (argc != 2) {
         cerr << "Usage: ./riscv_sim <elf_file>" << endl;
         return 1;
     }
 
-    CPU myCpu;
+    CPU cpu;
+    string filename = argv[1];
 
-    cout << "--- RISC-V SIMULATOR STARTING ---" << endl;
-    
-    // Load the real binary file
-    if (!myCpu.loadELF(argv[1])) {
+    if (!cpu.loadELF(filename)) {
         return 1;
     }
 
-    bool running = true;
-    while(running) {
-        // Simple step execution for now
-        // In the future, you can just loop executeNext() until false
-        running = myCpu.executeNext();
-        
-        // Safety break if PC goes out of bounds or hits 0 (null) often
-        if (myCpu.getPC() == 0) break; 
-    }
+    cout << "--- RISC-V SIMULATOR STARTING ---" << endl;
     
-    myCpu.printStatus();
+    // Main Execution Loop
+    // In a real simulator, this might run until a HALT instruction or specific PC
+    // For now, we cycle 1000 times or until the PC stops changing/hits 0
+    int max_cycles = 1000;
+    while(max_cycles > 0) {
+        bool active = cpu.executeNext();
+        if (!active) break; // HALT
+        max_cycles--;
+    }
+
     cout << "--- EXECUTION FINISHED ---" << endl;
+    cpu.printStatus();
+
     return 0;
 }

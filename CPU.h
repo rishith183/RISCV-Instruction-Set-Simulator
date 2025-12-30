@@ -27,6 +27,8 @@ public:
     
     // Helper to access PC 
     uint32_t getPC() const { return pc; }
+
+    void loadRaw(const std::vector<uint32_t>& code);
 };
 
 #endif
