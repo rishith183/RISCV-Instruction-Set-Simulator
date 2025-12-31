@@ -15,8 +15,11 @@ CPU::CPU() {
 }
 
 uint32_t CPU::fetch() {
-    // Safety check to prevent out-of-bounds access
-    if (pc >= memory.size()) return 0;
+    // Safety check: ensure we don't read past the end of memory
+    if (pc + 3 >= memory.size()) {
+        cout << "[ERROR] PC out of bounds or near boundary: 0x" << hex << pc << endl;
+        return 0; // Return NOP or halt signal
+    }
     
     // Little-Endian Load
     return memory[pc] | (memory[pc+1] << 8) | (memory[pc+2] << 16) | (memory[pc+3] << 24);
@@ -59,7 +62,7 @@ bool CPU::executeNext() {
                     cout << "EXEC: ADDI x" << dec << rd << ", x" << rs1 << ", " << imm << endl;
                     break;
                 case 0x2: // SLTI (Set Less Than Immediate)
-                    regs[rd] = (regs[rs1] < imm) ? 1 : 0;
+                    regs[rd] = ((int32_t)regs[rs1] < imm) ? 1 : 0;
                     cout << "EXEC: SLTI x" << dec << rd << ", x" << rs1 << ", " << imm << endl;
                     break;
                 case 0x3: // SLTIU (Unsigned)
@@ -115,7 +118,7 @@ bool CPU::executeNext() {
                     cout << "EXEC: SLL x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
                     break;
                 case 0x2: // SLT
-                    regs[rd] = (regs[rs1] < regs[rs2]) ? 1 : 0;
+                    regs[rd] = ((int32_t)regs[rs1] < (int32_t)regs[rs2]) ? 1 : 0;
                     cout << "EXEC: SLT x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
                     break;
                 case 0x3: // SLTU
@@ -147,57 +150,129 @@ bool CPU::executeNext() {
             break;
         }
 
-        case 0x03: // LW
-            if (funct3 == 0x2) { 
-                int32_t imm = (int32_t)inst >> 20;
-                uint32_t addr = regs[rs1] + imm;
-                if (addr + 3 < memory.size()) {
-                    uint32_t val = memory[addr] | (memory[addr+1] << 8) | (memory[addr+2] << 16) | (memory[addr+3] << 24);
-                    regs[rd] = val;
-                    cout << "EXEC: LW x" << dec << rd << " <- MEM[0x" << hex << addr << "] (Value: 0x" << hex << val << ")" << endl;
-                }
+        case 0x03: // LOAD Instructions
+        {
+            int32_t imm = (int32_t)inst >> 20;
+            uint32_t addr = regs[rs1] + imm;
+            
+            // Check bounds (simplified check)
+            if (addr + 3 >= memory.size()) {
+                cout << "[ERROR] Load Address out of bounds: 0x" << hex << addr << endl;
+                break;
+            }
+
+            switch(funct3) {
+                case 0x0: // LB (Load Byte - Signed)
+                    regs[rd] = (int8_t)memory[addr]; // Cast to int8_t then to uint32_t sign-extends it
+                    cout << "EXEC: LB x" << dec << rd << " <- MEM[0x" << hex << addr << "]" << endl;
+                    break;
+                case 0x1: // LH (Load Halfword - Signed)
+                    regs[rd] = (int16_t)(memory[addr] | (memory[addr+1] << 8));
+                    cout << "EXEC: LH x" << dec << rd << " <- MEM[0x" << hex << addr << "]" << endl;
+                    break;
+                case 0x2: // LW (Load Word)
+                    regs[rd] = memory[addr] | (memory[addr+1] << 8) | (memory[addr+2] << 16) | (memory[addr+3] << 24);
+                    cout << "EXEC: LW x" << dec << rd << " <- MEM[0x" << hex << addr << "]" << endl;
+                    break;
+                case 0x4: // LBU (Load Byte - Unsigned)
+                    regs[rd] = memory[addr]; 
+                    cout << "EXEC: LBU x" << dec << rd << " <- MEM[0x" << hex << addr << "]" << endl;
+                    break;
+                case 0x5: // LHU (Load Halfword - Unsigned)
+                    regs[rd] = memory[addr] | (memory[addr+1] << 8);
+                    cout << "EXEC: LHU x" << dec << rd << " <- MEM[0x" << hex << addr << "]" << endl;
+                    break;
+                default:
+                    cout << "Unknown Load funct3: " << funct3 << endl;
+                    break;
             }
             break;
+        }
 
-        case 0x23: // SW
-            if (funct3 == 0x2) { 
-                int32_t imm11_5 = (inst >> 25) & 0x7F;
-                int32_t imm4_0  = (inst >> 7) & 0x1F;
-                int32_t imm = (imm11_5 << 5) | imm4_0;
-                if (imm & 0x800) imm |= 0xFFFFF000;
-                
-                uint32_t addr = regs[rs1] + imm;
-                if (addr + 3 < memory.size()) {
-                    uint32_t val = regs[rs2];
+        case 0x23: // STORE Instructions
+        {
+            int32_t imm11_5 = (inst >> 25) & 0x7F;
+            int32_t imm4_0  = (inst >> 7) & 0x1F;
+            int32_t imm = (imm11_5 << 5) | imm4_0;
+            if (imm & 0x800) imm |= 0xFFFFF000;
+            
+            uint32_t addr = regs[rs1] + imm;
+            uint32_t val = regs[rs2];
+            
+            if (addr + 3 >= memory.size()) {
+                cout << "[ERROR] Store Address out of bounds: 0x" << hex << addr << endl;
+                break;
+            }
+
+            switch(funct3) {
+                case 0x0: // SB (Store Byte)
+                    memory[addr] = val & 0xFF;
+                    cout << "EXEC: SB MEM[0x" << hex << addr << "] <- 0x" << (val & 0xFF) << endl;
+                    break;
+                case 0x1: // SH (Store Halfword)
+                    memory[addr] = val & 0xFF;
+                    memory[addr+1] = (val >> 8) & 0xFF;
+                    cout << "EXEC: SH MEM[0x" << hex << addr << "] <- 0x" << (val & 0xFFFF) << endl;
+                    break;
+                case 0x2: // SW (Store Word)
                     memory[addr] = val & 0xFF;
                     memory[addr+1] = (val >> 8) & 0xFF;
                     memory[addr+2] = (val >> 16) & 0xFF;
                     memory[addr+3] = (val >> 24) & 0xFF;
-                    cout << "EXEC: SW MEM[0x" << hex << addr << "] <- x" << dec << rs2 << " (Value: 0x" << hex << val << ")" << endl;
-                }
+                    cout << "EXEC: SW MEM[0x" << hex << addr << "] <- 0x" << val << endl;
+                    break;
+                default:
+                    cout << "Unknown Store funct3: " << funct3 << endl;
+                    break;
             }
             break;
+        }
 
-        case 0x63: // BNE
-            if (funct3 == 0x1) { 
-                int32_t imm12   = (inst >> 31) & 0x1;
-                int32_t imm10_5 = (inst >> 25) & 0x3F;
-                int32_t imm4_1  = (inst >> 8) & 0xF;
-                int32_t imm11   = (inst >> 7) & 0x1;
-                int32_t imm = (imm12 << 12) | (imm11 << 11) | (imm10_5 << 5) | (imm4_1 << 1);
-                if (imm12) imm |= 0xFFFFE000;
+        case 0x63: // BRANCH Instructions
+        {
+            // Decode Immediate (B-Type)
+            int32_t imm12   = (inst >> 31) & 0x1;
+            int32_t imm10_5 = (inst >> 25) & 0x3F;
+            int32_t imm4_1  = (inst >> 8) & 0xF;
+            int32_t imm11   = (inst >> 7) & 0x1;
+            int32_t imm = (imm12 << 12) | (imm11 << 11) | (imm10_5 << 5) | (imm4_1 << 1);
+            if (imm12) imm |= 0xFFFFE000;
 
-                cout << "EXEC: BNE Checking x" << dec << rs1 << "(" << (int32_t)regs[rs1] << ") vs x" << rs2 << "(" << (int32_t)regs[rs2] << ")" << endl;
+            bool takeBranch = false;
+            cout << "EXEC: BRANCH func3 " << funct3 << " checking x" << dec << rs1 << " vs x" << rs2 << endl;
 
-                if (regs[rs1] != regs[rs2]) {
-                    pc += (imm - 4);
-                    cout << "   -> TAKEN. Jumping to PC 0x" << hex << (pc + 4) << endl;
-                }
-                else {
-                    cout << "EXEC: BNE (NOT TAKEN)" << endl;
-                }
+            switch(funct3) {
+                case 0x0: // BEQ
+                    takeBranch = (regs[rs1] == regs[rs2]);
+                    break;
+                case 0x1: // BNE
+                    takeBranch = (regs[rs1] != regs[rs2]);
+                    break;
+                case 0x4: // BLT (Signed)
+                    takeBranch = ((int32_t)regs[rs1] < (int32_t)regs[rs2]);
+                    break;
+                case 0x5: // BGE (Signed)
+                    takeBranch = ((int32_t)regs[rs1] >= (int32_t)regs[rs2]);
+                    break;
+                case 0x6: // BLTU (Unsigned)
+                    takeBranch = (regs[rs1] < regs[rs2]);
+                    break;
+                case 0x7: // BGEU (Unsigned)
+                    takeBranch = (regs[rs1] >= regs[rs2]);
+                    break;
+                default:
+                    cout << "Unknown Branch funct3: " << funct3 << endl;
+                    break;
+            }
+
+            if (takeBranch) {
+                pc += (imm - 4); 
+                cout << "   -> TAKEN. Jumping to PC 0x" << hex << (pc + 4) << endl;
+            } else {
+                cout << "   -> NOT TAKEN" << endl;
             }
             break;
+        }
         
         case 0x37: // LUI (Load Upper Immediate)
         {
