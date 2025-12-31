@@ -8,8 +8,8 @@ using namespace ELFIO;
 CPU::CPU() {
     pc = 0;
     std::fill(std::begin(regs), std::end(regs), 0);
-    memory.resize(4096, 0); 
-    regs[2] = 4096; // Stack Pointer initialization
+    memory.resize(4 * 1024 * 1024, 0);  // 4 MB fixed memory
+    regs[2] = memory.size(); // Stack Pointer initialization
 
     // regs[10] = 5; // Initialize x10 to 5 for testing
 }
@@ -415,12 +415,9 @@ bool CPU::loadELF(const string& filename) {
 
             // Check boundaries
             if (address + memSize > memory.size()) {
-                if (address + memSize < 1024 * 1024 * 4) { // Limit to 4MB
-                     memory.resize(address + memSize);
-                } else {
-                     cerr << "Error: Segment exceeds memory bounds." << endl;
-                     return false;
-                }
+                cerr << "Error: ELF segment (End: 0x" << hex << (address + memSize)
+                     << ") exceeds fixed memory size (4MB)." << endl;
+                return false;
             }
 
             // Copy data from file to our memory vector
