@@ -15,10 +15,10 @@ CPU::CPU() {
 }
 
 uint32_t CPU::fetch() {
-    // Safety check: ensure we don't read past the end of memory
+    // Bounds check
     if (pc + 3 >= memory.size()) {
-        cout << "[ERROR] PC out of bounds or near boundary: 0x" << hex << pc << endl;
-        return 0; // Return NOP or halt signal
+        if (!quiet_mode) cout << "[ERROR] PC out of bounds: 0x" << hex << pc << endl;
+        return 0;
     }
     
     // Little-Endian Load
@@ -33,12 +33,16 @@ void CPU::printStatus() {
         cout << "x" << dec << i+2 << ": " << hex << "0x" << regs[i+2] << "\t";
         cout << "x" << dec << i+3 << ": " << hex << "0x" << regs[i+3] << endl;
     }
+    cout << "Instructions Executed: " << dec << instruction_count << endl;
     cout << "------------------------------------------" << endl;
 }
 
 bool CPU::executeNext() {
     uint32_t inst = fetch();
-    if (inst == 0) return false; // HALT on 0x00000000
+    if (inst == 0) return false; // Halt on null instruction
+
+    // Increment count 
+    instruction_count++;
 
     uint32_t opcode = inst & 0x7F;
     uint32_t rd = (inst >> 7) & 0x1F;
@@ -46,145 +50,82 @@ bool CPU::executeNext() {
     uint32_t rs2 = (inst >> 20) & 0x1F;
     uint32_t funct3 = (inst >> 12) & 0x7;
 
-    regs[0] = 0; // Enforce x0 = 0 invariant
+    regs[0] = 0; // x0 always 0
 
     switch(opcode) {
-
-        case 0x13: // Immediate Arithmetic
+        case 0x13: // I-Type Arithmetic
         {
             int32_t imm = (int32_t)inst >> 20;
+
             // For Shift instructions, immediate is only lower 5 bits
             uint32_t shamt = imm & 0x1F; 
 
             switch(funct3) {
-                case 0x0: // ADDI
-                    regs[rd] = regs[rs1] + imm;
-                    cout << "EXEC: ADDI x" << dec << rd << ", x" << rs1 << ", " << imm << endl;
+                case 0x0: regs[rd] = regs[rs1] + imm; 
+                    if(!quiet_mode) cout << "EXEC: ADDI x" << dec << rd << ", x" << rs1 << ", " << imm << endl; break;
+                case 0x2: regs[rd] = ((int32_t)regs[rs1] < imm) ? 1 : 0; 
+                    if(!quiet_mode) cout << "EXEC: SLTI x" << dec << rd << ", x" << rs1 << ", " << imm << endl; break;
+                case 0x3: regs[rd] = ((uint32_t)regs[rs1] < (uint32_t)imm) ? 1 : 0; 
+                    if(!quiet_mode) cout << "EXEC: SLTIU x" << dec << rd << ", x" << rs1 << ", " << imm << endl; break;
+                case 0x4: regs[rd] = regs[rs1] ^ imm; 
+                    if(!quiet_mode) cout << "EXEC: XORI x" << dec << rd << ", x" << rs1 << ", " << imm << endl; break;
+                case 0x6: regs[rd] = regs[rs1] | imm; 
+                    if(!quiet_mode) cout << "EXEC: ORI x" << dec << rd << ", x" << rs1 << ", " << imm << endl; break;
+                case 0x7: regs[rd] = regs[rs1] & imm; 
+                    if(!quiet_mode) cout << "EXEC: ANDI x" << dec << rd << ", x" << rs1 << ", " << imm << endl; break;
+                case 0x1: regs[rd] = regs[rs1] << shamt; 
+                    if(!quiet_mode) cout << "EXEC: SLLI x" << dec << rd << ", x" << rs1 << ", " << shamt << endl; break;
+                case 0x5: 
+                    if (inst & 0x40000000) { regs[rd] = (int32_t)regs[rs1] >> shamt; if(!quiet_mode) cout << "EXEC: SRAI x" << dec << rd << ", x" << rs1 << ", " << shamt << endl; }
+                    else { regs[rd] = (uint32_t)regs[rs1] >> shamt; if(!quiet_mode) cout << "EXEC: SRLI x" << dec << rd << ", x" << rs1 << ", " << shamt << endl; }
                     break;
-                case 0x2: // SLTI (Set Less Than Immediate)
-                    regs[rd] = ((int32_t)regs[rs1] < imm) ? 1 : 0;
-                    cout << "EXEC: SLTI x" << dec << rd << ", x" << rs1 << ", " << imm << endl;
-                    break;
-                case 0x3: // SLTIU (Unsigned)
-                    regs[rd] = ((uint32_t)regs[rs1] < (uint32_t)imm) ? 1 : 0;
-                    cout << "EXEC: SLTIU x" << dec << rd << ", x" << rs1 << ", " << imm << endl;
-                    break;
-                case 0x4: // XORI
-                    regs[rd] = regs[rs1] ^ imm;
-                    cout << "EXEC: XORI x" << dec << rd << ", x" << rs1 << ", " << imm << endl;
-                    break;
-                case 0x6: // ORI
-                    regs[rd] = regs[rs1] | imm;
-                    cout << "EXEC: ORI x" << dec << rd << ", x" << rs1 << ", " << imm << endl;
-                    break;
-                case 0x7: // ANDI
-                    regs[rd] = regs[rs1] & imm;
-                    cout << "EXEC: ANDI x" << dec << rd << ", x" << rs1 << ", " << imm << endl;
-                    break;
-                case 0x1: // SLLI (Shift Left Logical)
-                    regs[rd] = regs[rs1] << shamt;
-                    cout << "EXEC: SLLI x" << dec << rd << ", x" << rs1 << ", " << shamt << endl;
-                    break;
-                case 0x5: // SRLI & SRAI
-                    if (inst & 0x40000000) { // Bit 30 checks if it's SRAI (Arithmetic Right)
-                        regs[rd] = (int32_t)regs[rs1] >> shamt; // C++ handles arithmetic shift on signed types
-                        cout << "EXEC: SRAI x" << dec << rd << ", x" << rs1 << ", " << shamt << endl;
-                    } else { // SRLI (Logical Right)
-                        regs[rd] = (uint32_t)regs[rs1] >> shamt;
-                        cout << "EXEC: SRLI x" << dec << rd << ", x" << rs1 << ", " << shamt << endl;
-                    }
-                    break;
+                // FIX 3: Default case
                 default:
-                    cout << "Unknown I-Type Funct3: " << funct3 << endl;
+                    if(!quiet_mode) cout << "[ERROR] Unknown I-Type funct3: " << funct3 << endl;
                     break;
             }
             break;
         }
-            
-        case 0x33: // Register Arithmetic
+        case 0x33: // R-Type Arithmetic
         {
             switch(funct3) {
-                case 0x0: // ADD & SUB
-                    if (inst & 0x40000000) { // Bit 30 sets Sub
-                        regs[rd] = regs[rs1] - regs[rs2];
-                        cout << "EXEC: SUB x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
-                    } else {
-                        regs[rd] = regs[rs1] + regs[rs2];
-                        cout << "EXEC: ADD x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
-                    }
+                case 0x0: 
+                    if (inst & 0x40000000) { regs[rd] = regs[rs1] - regs[rs2]; if(!quiet_mode) cout << "EXEC: SUB x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl; }
+                    else { regs[rd] = regs[rs1] + regs[rs2]; if(!quiet_mode) cout << "EXEC: ADD x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl; }
                     break;
-                case 0x1: // SLL
-                    regs[rd] = regs[rs1] << (regs[rs2] & 0x1F);
-                    cout << "EXEC: SLL x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
+                case 0x1: regs[rd] = regs[rs1] << (regs[rs2] & 0x1F); if(!quiet_mode) cout << "EXEC: SLL x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl; break;
+                case 0x2: regs[rd] = ((int32_t)regs[rs1] < (int32_t)regs[rs2]) ? 1 : 0; if(!quiet_mode) cout << "EXEC: SLT x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl; break;
+                case 0x3: regs[rd] = ((uint32_t)regs[rs1] < (uint32_t)regs[rs2]) ? 1 : 0; if(!quiet_mode) cout << "EXEC: SLTU x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl; break;
+                case 0x4: regs[rd] = regs[rs1] ^ regs[rs2]; if(!quiet_mode) cout << "EXEC: XOR x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl; break;
+                case 0x5: 
+                    if (inst & 0x40000000) { regs[rd] = (int32_t)regs[rs1] >> (regs[rs2] & 0x1F); if(!quiet_mode) cout << "EXEC: SRA x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl; }
+                    else { regs[rd] = (uint32_t)regs[rs1] >> (regs[rs2] & 0x1F); if(!quiet_mode) cout << "EXEC: SRL x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl; }
                     break;
-                case 0x2: // SLT
-                    regs[rd] = ((int32_t)regs[rs1] < (int32_t)regs[rs2]) ? 1 : 0;
-                    cout << "EXEC: SLT x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
-                    break;
-                case 0x3: // SLTU
-                    regs[rd] = ((uint32_t)regs[rs1] < (uint32_t)regs[rs2]) ? 1 : 0;
-                    cout << "EXEC: SLTU x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
-                    break;
-                case 0x4: // XOR
-                    regs[rd] = regs[rs1] ^ regs[rs2];
-                    cout << "EXEC: XOR x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
-                    break;
-                case 0x5: // SRL & SRA
-                    if (inst & 0x40000000) { // SRA
-                        regs[rd] = (int32_t)regs[rs1] >> (regs[rs2] & 0x1F);
-                        cout << "EXEC: SRA x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
-                    } else { // SRL
-                        regs[rd] = (uint32_t)regs[rs1] >> (regs[rs2] & 0x1F);
-                        cout << "EXEC: SRL x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
-                    }
-                    break;
-                case 0x6: // OR
-                    regs[rd] = regs[rs1] | regs[rs2];
-                    cout << "EXEC: OR x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
-                    break;
-                case 0x7: // AND
-                    regs[rd] = regs[rs1] & regs[rs2];
-                    cout << "EXEC: AND x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl;
+                case 0x6: regs[rd] = regs[rs1] | regs[rs2]; if(!quiet_mode) cout << "EXEC: OR x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl; break;
+                case 0x7: regs[rd] = regs[rs1] & regs[rs2]; if(!quiet_mode) cout << "EXEC: AND x" << dec << rd << ", x" << rs1 << ", x" << rs2 << endl; break;
+                // FIX 3: Default case
+                default:
+                    if(!quiet_mode) cout << "[ERROR] Unknown R-Type funct3: " << funct3 << endl;
                     break;
             }
             break;
         }
-
-        case 0x03: // LOAD Instructions
+        case 0x03: // Loads
         {
             int32_t imm = (int32_t)inst >> 20;
             uint32_t addr = regs[rs1] + imm;
-            
-            // Check bounds (simplified check)
-            if (addr + 3 >= memory.size()) {
-                cout << "[ERROR] Load Address out of bounds: 0x" << hex << addr << endl;
-                break;
+            // FIX 4: Halt on OOB
+            if (addr + 3 >= memory.size()) { 
+                if(!quiet_mode) cout << "[ERROR] Load OOB at 0x" << hex << addr << endl; 
+                return false; 
             }
-
-            switch(funct3) {
-                case 0x0: // LB (Load Byte - Signed)
-                    regs[rd] = (int8_t)memory[addr]; // Cast to int8_t then to uint32_t sign-extends it
-                    cout << "EXEC: LB x" << dec << rd << " <- MEM[0x" << hex << addr << "]" << endl;
-                    break;
-                case 0x1: // LH (Load Halfword - Signed)
-                    regs[rd] = (int16_t)(memory[addr] | (memory[addr+1] << 8));
-                    cout << "EXEC: LH x" << dec << rd << " <- MEM[0x" << hex << addr << "]" << endl;
-                    break;
-                case 0x2: // LW (Load Word)
-                    regs[rd] = memory[addr] | (memory[addr+1] << 8) | (memory[addr+2] << 16) | (memory[addr+3] << 24);
-                    cout << "EXEC: LW x" << dec << rd << " <- MEM[0x" << hex << addr << "]" << endl;
-                    break;
-                case 0x4: // LBU (Load Byte - Unsigned)
-                    regs[rd] = memory[addr]; 
-                    cout << "EXEC: LBU x" << dec << rd << " <- MEM[0x" << hex << addr << "]" << endl;
-                    break;
-                case 0x5: // LHU (Load Halfword - Unsigned)
-                    regs[rd] = memory[addr] | (memory[addr+1] << 8);
-                    cout << "EXEC: LHU x" << dec << rd << " <- MEM[0x" << hex << addr << "]" << endl;
-                    break;
-                default:
-                    cout << "Unknown Load funct3: " << funct3 << endl;
-                    break;
+           switch(funct3) {
+                case 0x0: regs[rd] = (int8_t)memory[addr]; if(!quiet_mode) cout << "EXEC: LB" << endl; break;
+                case 0x1: regs[rd] = (int16_t)(memory[addr] | (memory[addr+1]<<8)); if(!quiet_mode) cout << "EXEC: LH" << endl; break;
+                case 0x2: regs[rd] = memory[addr] | (memory[addr+1]<<8) | (memory[addr+2]<<16) | (memory[addr+3]<<24); if(!quiet_mode) cout << "EXEC: LW" << endl; break;
+                case 0x4: regs[rd] = memory[addr]; if(!quiet_mode) cout << "EXEC: LBU" << endl; break;
+                case 0x5: regs[rd] = memory[addr] | (memory[addr+1]<<8); if(!quiet_mode) cout << "EXEC: LHU" << endl; break;
+                default: if(!quiet_mode) cout << "[ERROR] Unknown Load funct3" << endl; break;
             }
             break;
         }
@@ -198,101 +139,56 @@ bool CPU::executeNext() {
             
             uint32_t addr = regs[rs1] + imm;
             uint32_t val = regs[rs2];
-            
-            if (addr + 3 >= memory.size()) {
-                cout << "[ERROR] Store Address out of bounds: 0x" << hex << addr << endl;
-                break;
+            // FIX 4: Halt on OOB
+            if (addr + 3 >= memory.size()) { 
+                if(!quiet_mode) cout << "[ERROR] Store OOB at 0x" << hex << addr << endl; 
+                return false; 
             }
-
-            switch(funct3) {
-                case 0x0: // SB (Store Byte)
-                    memory[addr] = val & 0xFF;
-                    cout << "EXEC: SB MEM[0x" << hex << addr << "] <- 0x" << (val & 0xFF) << endl;
-                    break;
-                case 0x1: // SH (Store Halfword)
-                    memory[addr] = val & 0xFF;
-                    memory[addr+1] = (val >> 8) & 0xFF;
-                    cout << "EXEC: SH MEM[0x" << hex << addr << "] <- 0x" << (val & 0xFFFF) << endl;
-                    break;
-                case 0x2: // SW (Store Word)
-                    memory[addr] = val & 0xFF;
-                    memory[addr+1] = (val >> 8) & 0xFF;
-                    memory[addr+2] = (val >> 16) & 0xFF;
-                    memory[addr+3] = (val >> 24) & 0xFF;
-                    cout << "EXEC: SW MEM[0x" << hex << addr << "] <- 0x" << val << endl;
-                    break;
-                default:
-                    cout << "Unknown Store funct3: " << funct3 << endl;
-                    break;
+           switch(funct3) {
+                case 0x0: memory[addr] = val & 0xFF; if(!quiet_mode) cout << "EXEC: SB" << endl; break;
+                case 0x1: memory[addr] = val & 0xFF; memory[addr+1] = (val>>8) & 0xFF; if(!quiet_mode) cout << "EXEC: SH" << endl; break;
+                case 0x2: memory[addr] = val & 0xFF; memory[addr+1] = (val>>8) & 0xFF; memory[addr+2] = (val>>16) & 0xFF; memory[addr+3] = (val>>24) & 0xFF; if(!quiet_mode) cout << "EXEC: SW" << endl; break;
+                default: if(!quiet_mode) cout << "[ERROR] Unknown Store funct3" << endl; break;
             }
             break;
         }
 
         case 0x63: // BRANCH Instructions
         {
-            // Decode Immediate (B-Type)
-            int32_t imm12   = (inst >> 31) & 0x1;
+            int32_t imm12 = (inst >> 31) & 0x1;
             int32_t imm10_5 = (inst >> 25) & 0x3F;
-            int32_t imm4_1  = (inst >> 8) & 0xF;
-            int32_t imm11   = (inst >> 7) & 0x1;
+            int32_t imm4_1 = (inst >> 8) & 0xF;
+            int32_t imm11 = (inst >> 7) & 0x1;
             int32_t imm = (imm12 << 12) | (imm11 << 11) | (imm10_5 << 5) | (imm4_1 << 1);
             if (imm12) imm |= 0xFFFFE000;
 
-            bool takeBranch = false;
-            cout << "EXEC: BRANCH func3 " << funct3 << " checking x" << dec << rs1 << " vs x" << rs2 << endl;
-
+            bool take = false;
             switch(funct3) {
-                case 0x0: // BEQ
-                    takeBranch = (regs[rs1] == regs[rs2]);
-                    break;
-                case 0x1: // BNE
-                    takeBranch = (regs[rs1] != regs[rs2]);
-                    break;
-                case 0x4: // BLT (Signed)
-                    takeBranch = ((int32_t)regs[rs1] < (int32_t)regs[rs2]);
-                    break;
-                case 0x5: // BGE (Signed)
-                    takeBranch = ((int32_t)regs[rs1] >= (int32_t)regs[rs2]);
-                    break;
-                case 0x6: // BLTU (Unsigned)
-                    takeBranch = (regs[rs1] < regs[rs2]);
-                    break;
-                case 0x7: // BGEU (Unsigned)
-                    takeBranch = (regs[rs1] >= regs[rs2]);
-                    break;
-                default:
-                    cout << "Unknown Branch funct3: " << funct3 << endl;
-                    break;
+                case 0x0: take = (regs[rs1] == regs[rs2]); break;
+                case 0x1: take = (regs[rs1] != regs[rs2]); break;
+                case 0x4: take = ((int32_t)regs[rs1] < (int32_t)regs[rs2]); break;
+                case 0x5: take = ((int32_t)regs[rs1] >= (int32_t)regs[rs2]); break;
+                case 0x6: take = (regs[rs1] < regs[rs2]); break;
+                case 0x7: take = (regs[rs1] >= regs[rs2]); break;
+                default: if(!quiet_mode) cout << "[ERROR] Unknown Branch funct3" << endl; break;
             }
-
-            if (takeBranch) {
-                pc += (imm - 4); 
-                cout << "   -> TAKEN. Jumping to PC 0x" << hex << (pc + 4) << endl;
-            } else {
-                cout << "   -> NOT TAKEN" << endl;
-            }
+            if(!quiet_mode) cout << "EXEC: BRANCH " << (take ? "TAKEN" : "NOT TAKEN") << endl;
+            if (take) pc += (imm - 4);
             break;
         }
         
-        case 0x37: // LUI (Load Upper Immediate)
-        {
-            int32_t imm = inst & 0xFFFFF000; // Extract top 20 bits
-            regs[rd] = imm;
-            cout << "EXEC: LUI x" << dec << rd << ", 0x" << hex << imm << endl;
+        case 0x37: // LUI
+            regs[rd] = inst & 0xFFFFF000; 
+            if(!quiet_mode) cout << "EXEC: LUI x" << dec << rd << endl;
             break;
-        }
-
-        case 0x17: // AUIPC (Add Upper Immediate to PC)
-        {
-            int32_t imm = inst & 0xFFFFF000;
-            regs[rd] = pc + imm; // Adds offset to current PC
-            cout << "EXEC: AUIPC x" << dec << rd << ", 0x" << hex << imm << endl;
+            
+        case 0x17: // AUIPC
+            regs[rd] = pc + (inst & 0xFFFFF000); 
+            if(!quiet_mode) cout << "EXEC: AUIPC x" << dec << rd << endl;
             break;
-        }
-
-        case 0x6F: // JAL (Jump and Link) - Function Call
-        {
-            // J-Type Immediate Decoding (The scrambled bits)
+            
+        case 0x6F: // JAL
+       {
             int32_t imm20 = (inst >> 31) & 0x1;
             int32_t imm10_1 = (inst >> 21) & 0x3FF;
             int32_t imm11 = (inst >> 20) & 0x1;
@@ -300,71 +196,59 @@ bool CPU::executeNext() {
             
             // Reassemble the 20-bit offset
             int32_t offset = (imm20 << 20) | (imm19_12 << 12) | (imm11 << 11) | (imm10_1 << 1);
-            
-            // Sign-Extend to 32 bits
-            if (offset & 0x100000) offset |= 0xFFE00000; 
-
-            regs[rd] = pc + 4; // Save return address (link)
-            pc += offset;      // Jump to target
-            
-            cout << "EXEC: JAL (Jump) -> PC is now 0x" << hex << pc << endl;
-            return true; // Return immediately (Do not do pc += 4)
-        }
+            if (offset & 0x100000) offset |= 0xFFE00000;
+            regs[rd] = pc + 4;
+            pc += offset;
+            if(!quiet_mode) cout << "EXEC: JAL -> 0x" << hex << pc << endl;
+            // FIX 1: Return immediately, instruction count already incremented at start
+            return true;
+         }
 
         case 0x67: // JALR (Jump and Link Register) - Function Return
         {
-            if (funct3 == 0x0) {
-                int32_t imm = (int32_t)(inst & 0xFFF00000) >> 20;
-                uint32_t target = regs[rs1] + imm;
-                target &= ~1; // Clear LSB (Hardware requirement)
-                
-                regs[rd] = pc + 4; // Save return address
-                pc = target;       // Jump
-                
-                cout << "EXEC: JALR (Return) -> PC is now 0x" << hex << pc << endl;
-                return true; // Return immediately
+            // FIX 2: Validate funct3 is 0
+            if (funct3 != 0x0) {
+                if(!quiet_mode) cout << "[ERROR] Invalid JALR funct3: " << funct3 << endl;
+                break;
             }
-            break;
-        }
+            
+            int32_t imm = (int32_t)(inst & 0xFFF00000) >> 20;
+            uint32_t target = (regs[rs1] + imm) & ~1;
+            regs[rd] = pc + 4;
+            pc = target;
+            if(!quiet_mode) cout << "EXEC: JALR -> 0x" << hex << pc << endl;
+            // FIX 1: Return immediately
+            return true;
+         }
 
         case 0x73: // ECALL (System Calls)
         {
-            uint32_t syscall_num = regs[17]; 
-
-            switch(syscall_num) {
-                case 1: // Print Integer
-                    cout << "SYSCALL: Print Int -> " << dec << (int32_t)regs[10] << endl;
-                    break;
-                    
-                case 4: // Print String
-                {
-                    uint32_t addr = regs[10];
-                    string output = "";
-                    while(addr < memory.size()) {
-                        char c = (char)memory[addr];
-                        if (c == '\0') break;
-                        output += c;
-                        addr++;
-                    }
-                    cout << "SYSCALL: Print Str -> " << output << endl;
-                    break;
-                }
-                    
-                case 10: // Exit
-                    cout << "SYSCALL: Exit called." << endl;
-                    return false; 
-                    
-                default:
-                    cout << "Unknown Syscall: " << syscall_num << endl;
-                    break;
+            uint32_t syscall = regs[17];
+            if (syscall == 10) { 
+                if(!quiet_mode) cout << "SYSCALL: EXIT" << endl; 
+                return false; 
             }
-            break;
+            if (syscall == 1) { 
+                if(!quiet_mode) cout << "SYSCALL: Print Int -> " << dec << (int32_t)regs[10] << endl; 
+            }
+            if (syscall == 4) { // Print String
+                uint32_t addr = regs[10]; // Address of string is in x10
+                string output = "";
+                while(addr < memory.size()) {
+                    char c = (char)memory[addr];
+                    if (c == '\0') break; // Stop at null terminator
+                    output += c;
+                    addr++;
+                }
+                if(!quiet_mode) cout << "SYSCALL: Print Str -> " << output << endl; 
+            }
+           break;
         }
-            
+        
         default:
-            cout << "Unknown Opcode: 0x" << hex << opcode << endl;
-            break;
-    }
+            if(!quiet_mode) cout << "[ERROR] Unknown Opcode: 0x" << hex << opcode << endl;
+            return false;
+   }
     
     pc += 4;
     return true;
@@ -378,59 +262,33 @@ void CPU::loadRaw(const vector<uint32_t>& code) {
     size_t addr = 0;
     for (uint32_t inst : code) {
         if (addr + 4 > memory.size()) break;
-        memory[addr]   = inst & 0xFF;
+        memory[addr] = inst & 0xFF;
         memory[addr+1] = (inst >> 8) & 0xFF;
         memory[addr+2] = (inst >> 16) & 0xFF;
         memory[addr+3] = (inst >> 24) & 0xFF;
         addr += 4;
     }
-    pc = 0; // Reset PC
-    cout << "Loaded " << code.size() * 4 << " bytes of raw machine code." << endl;
+    pc = 0;
+    if(!quiet_mode) cout << "Loaded " << code.size() * 4 << " bytes raw." << endl;
 }
 
 bool CPU::loadELF(const string& filename) {
     elfio reader;
-    
-    // 1. Load the file
-    if (!reader.load(filename)) {
-        cerr << "Error: Could not process ELF file: " << filename << endl;
-        return false;
-    }
-
-    // 2. Check if it is a RISC-V binary
-    if (reader.get_machine() != EM_RISCV) {
-        cerr << "Error: Defined file is not a RISC-V binary." << endl;
-        return false;
-    }
-
-    // 3. Clear existing memory
+    if (!reader.load(filename)) return false;
+    if (reader.get_machine() != EM_RISCV) return false;
     std::fill(memory.begin(), memory.end(), 0);
-
-    // 4. Iterate over "Segments" 
     for (const auto& segment : reader.segments) {
         if (segment->get_type() == PT_LOAD) {
-            uint32_t address = (uint32_t)segment->get_virtual_address();
-            uint32_t fileSize = (uint32_t)segment->get_file_size();
-            uint32_t memSize = (uint32_t)segment->get_memory_size();
-
-            // Check boundaries
-            if (address + memSize > memory.size()) {
-                cerr << "Error: ELF segment (End: 0x" << hex << (address + memSize)
-                     << ") exceeds fixed memory size (4MB)." << endl;
-                return false;
-            }
-
-            // Copy data from file to our memory vector
-            if (fileSize > 0) {
-                const char* data = segment->get_data();
-                memcpy(&memory[address], data, fileSize);
-            }
+            uint32_t addr = (uint32_t)segment->get_virtual_address();
+            uint32_t fsize = (uint32_t)segment->get_file_size();
+            uint32_t msize = (uint32_t)segment->get_memory_size();
+            if (addr + msize > memory.size()) return false;
+            if (fsize > 0) memcpy(&memory[addr], segment->get_data(), fsize);
         }
     }
 
-    // 5. Set the Program Counter (PC)
+    // Set the Program Counter (PC)
     pc = (uint32_t)reader.get_entry();
-    cout << "Loaded ELF. Entry point set to: 0x" << hex << pc << endl;
-    
+    if(!quiet_mode) cout << "Loaded ELF Entry: 0x" << hex << pc << endl;
     return true;
 }

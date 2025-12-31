@@ -1,0 +1,12 @@
+# Compiled Binaries
+riscv_sim
+sim
+run_tests
+*.o
+
+# System Files
+.DS_Store
+.vscode/
+
+# Temporary Test Artifacts (Optional, keep if you want to save them)
+*.elf
